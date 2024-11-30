@@ -33,52 +33,102 @@ client
 
 // Create Room
 app.post("/create-room", async (req, res) => {
-	const { hostName } = req.body;
-	const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase(); // Generate a random room code
-	try {
-		const collection = db.collection(roomsCollection);
-		const room = { code: roomCode, hostName, createdAt: new Date() };
-		await collection.insertOne(room);
-		res.json({ message: "Room created", roomCode });
-	} catch (error) {
-		res.status(500).json({ error: error.message });
-	}
+    const { hostName } = req.body;
+    const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    try {
+        const roomCollection = db.collection("Rooms");
+        const participantCollection = db.collection("Participants");
+
+        // Save the room
+        const room = { code: roomCode, hostName, createdAt: new Date() };
+        await roomCollection.insertOne(room);
+
+        // Add the creator as a participant
+        await participantCollection.insertOne({ roomCode, name: hostName, joinedAt: new Date() });
+
+        res.json({ roomCode, message: `${hostName} has created the room` });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
+
+
 
 // Join Room
 app.post("/join-room", async (req, res) => {
-	const { name, roomCode } = req.body;
-	try {
-		const roomCollection = db.collection(roomsCollection);
-		const room = await roomCollection.findOne({ code: roomCode });
-		if (!room) return res.status(404).json({ error: "Room not found" });
+    const { name, roomCode } = req.body;
+    try {
+        const roomCollection = db.collection("Rooms");
+        const room = await roomCollection.findOne({ code: roomCode });
 
-		const participantCollection = db.collection(participantsCollection);
-		await participantCollection.insertOne({ roomCode, name, joinedAt: new Date() });
-		res.json({ message: "Joined room successfully" });
-	} catch (error) {
-		res.status(500).json({ error: error.message });
-	}
+        if (!room) {
+            return res.status(404).json({ error: "Invalid room code" });
+        }
+
+        const participantCollection = db.collection("Participants");
+        await participantCollection.insertOne({ roomCode, name, joinedAt: new Date() });
+        res.json({ message: `${name} has joined the room `});
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
-// Real-time updates with Socket.IO
+
+app.get("/room/:roomCode/participants", async (req, res) => {
+    const { roomCode } = req.params;
+    try {
+        const participantCollection = db.collection("Participants");
+        const participants = await participantCollection.find({ roomCode }).toArray();
+        res.json({ participants });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+
+
+
 io.on("connection", (socket) => {
-	console.log("A user connected:", socket.id);
+    console.log("A user connected:", socket.id);
 
-	// Join a specific room
-	socket.on("joinRoom", ({ roomCode, name }) => {
-		socket.join(roomCode);
-		console.log(`${name} joined room: ${roomCode}`);
-
-		// Notify all clients in the room about the new participant
-		io.to(roomCode).emit("participantUpdate", { roomCode });
+    socket.on("joinRoom", async ({ roomCode, name }, callback) => {
+		try {
+			const roomCollection = db.collection("Rooms");
+			const room = await roomCollection.findOne({ code: roomCode });
+	
+			if (!room) {
+				return callback({ error: "Invalid room code. Room does not exist." });
+			}
+	
+			const participantCollection = db.collection("Participants");
+			await participantCollection.insertOne({ roomCode, name, joinedAt: new Date() });
+	
+			// Fetch the updated participants list
+			const participants = await participantCollection.find({ roomCode }).toArray();
+	
+			// Emit the updated participants list to everyone in the room
+			io.to(roomCode).emit("participantUpdate", participants);
+	
+			// Join the user to the room
+			socket.join(roomCode);
+	
+			// Send confirmation back to the joining client
+			callback({ success: true, message: "Successfully joined the room" });
+		} catch (error) {
+			callback({ error: "An error occurred while joining the room" });
+		}
 	});
+	
+	
+	
+	
 
-	// Handle disconnect
-	socket.on("disconnect", () => {
-		console.log("A user disconnected:", socket.id);
-	});
+    socket.on("disconnect", () => {
+        console.log("User disconnected:", socket.id);
+    });
 });
+
+
 
 server.listen(PORT, () => {
 	console.log(`Server is running on http://localhost:${PORT}`);
