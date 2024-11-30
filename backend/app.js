@@ -31,30 +31,40 @@ client
 		process.exit(1);
 	});
 
-// Create Room
 app.post("/create-room", async (req, res) => {
     const { hostName } = req.body;
+
+    // Check if hostName is valid
+    if (!hostName || hostName.trim() === "") {
+        return res.status(400).json({ error: "Host name cannot be empty" });
+    }
+
     const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
     try {
         const roomCollection = db.collection("Rooms");
         const participantCollection = db.collection("Participants");
 
         // Save the room
-        const room = { code: roomCode, hostName, createdAt: new Date() };
+        const room = { code: roomCode, hostName: hostName.trim(), createdAt: new Date() };
         await roomCollection.insertOne(room);
 
-        // Add the creator as a participant
-        await participantCollection.insertOne({ roomCode, name: hostName, joinedAt: new Date() });
+        // Add the creator as a participant (only once)
+        const existingParticipant = await participantCollection.findOne({ roomCode, name: hostName.trim() });
+        if (!existingParticipant) {
+            await participantCollection.insertOne({
+                roomCode,
+                name: hostName.trim(),
+                joinedAt: new Date(),
+            });
+        }
 
-        res.json({ roomCode, message: `${hostName} has created the room` });
+        res.json({ roomCode, message: `${hostName.trim()} has created the room` });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
 
-
-// Join Room
 app.post("/join-room", async (req, res) => {
     const { name, roomCode } = req.body;
     try {
@@ -66,8 +76,14 @@ app.post("/join-room", async (req, res) => {
         }
 
         const participantCollection = db.collection("Participants");
+        const existingParticipant = await participantCollection.findOne({ roomCode, name });
+
+        if (existingParticipant) {
+            return res.status(200).json({ message: `${name} is already in the room` });
+        }
+
         await participantCollection.insertOne({ roomCode, name, joinedAt: new Date() });
-        res.json({ message: `${name} has joined the room `});
+        res.json({ message: `${name} has joined the room` });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -101,18 +117,17 @@ io.on("connection", (socket) => {
 			}
 	
 			const participantCollection = db.collection("Participants");
-			await participantCollection.insertOne({ roomCode, name, joinedAt: new Date() });
+			const existingParticipant = await participantCollection.findOne({ roomCode, name });
 	
-			// Fetch the updated participants list
+			// Add participant only if they don't already exist
+			if (!existingParticipant) {
+				await participantCollection.insertOne({ roomCode, name, joinedAt: new Date() });
+			}
+	
 			const participants = await participantCollection.find({ roomCode }).toArray();
-	
-			// Emit the updated participants list to everyone in the room
 			io.to(roomCode).emit("participantUpdate", participants);
 	
-			// Join the user to the room
 			socket.join(roomCode);
-	
-			// Send confirmation back to the joining client
 			callback({ success: true, message: "Successfully joined the room" });
 		} catch (error) {
 			callback({ error: "An error occurred while joining the room" });
@@ -120,11 +135,9 @@ io.on("connection", (socket) => {
 	});
 	
 	
-	
-	
-
     socket.on("disconnect", () => {
         console.log("User disconnected:", socket.id);
+		
     });
 });
 

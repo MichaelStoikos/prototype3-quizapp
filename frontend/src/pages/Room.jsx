@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams } from "react-router-dom";
 import socket from "../components/socket";
 
@@ -6,9 +6,9 @@ function Room() {
     const { roomCode } = useParams();
     const [participants, setParticipants] = useState([]);
     const [error, setError] = useState(null);
+    const hasJoinedRoom = useRef(false); // Track if the user has already joined
 
     useEffect(() => {
-        // Fetch initial participants
         const fetchParticipants = async () => {
             try {
                 const response = await fetch(`http://localhost:2000/room/${roomCode}/participants`);
@@ -22,14 +22,25 @@ function Room() {
             }
         };
 
-        // Join the room via socket
+        // Join the room via socket if not already joined
         const joinRoom = () => {
-            socket.emit("joinRoom", { roomCode, name: "Room Creator" }, (response) => {
-                if (response.error) {
-                    setError(response.error);
-                }
-            });
-        };
+			if (!hasJoinedRoom.current) {
+				const isCreator = name === "Room Creator"; // Assuming 'name' is the creator's name
+				if (!isCreator) {
+					// Only emit 'joinRoom' if the user is not the creator
+					socket.emit("joinRoom", { roomCode, name }, (response) => {
+						if (response.error) {
+							setError(response.error);
+						} else {
+							hasJoinedRoom.current = true; // Mark as joined
+						}
+					});
+				}
+				// Mark creator as "joined" immediately to avoid redundant joins
+				hasJoinedRoom.current = true;
+			}
+		};
+		
 
         fetchParticipants();
         joinRoom();
@@ -40,7 +51,6 @@ function Room() {
             setParticipants(updatedParticipants);
         });
 
-        // Cleanup listeners on unmount
         return () => {
             socket.off("participantUpdate");
         };
@@ -55,11 +65,13 @@ function Room() {
             <h1>Room: {roomCode}</h1>
 
             <section className="participants-section">
-                <h2>Participants ({participants.length})</h2>
+                <h2>Participants ({participants.length-1})</h2>
                 <ul>
-                    {participants.map((participant, index) => (
-                        <li key={index}>{participant.name}</li>
-                    ))}
+				{participants
+					.filter((participant) => participant.name && participant.name.trim() !== "")
+					.map((participant, index) => (
+						<li key={index}>{participant.name}</li>
+					))}
                 </ul>
             </section>
         </div>
