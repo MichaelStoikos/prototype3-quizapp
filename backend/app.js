@@ -101,43 +101,63 @@ app.get("/room/:roomCode/participants", async (req, res) => {
     }
 });
 
-
-
-
 io.on("connection", (socket) => {
     console.log("A user connected:", socket.id);
 
     socket.on("joinRoom", async ({ roomCode, name }, callback) => {
-		try {
-			const roomCollection = db.collection("Rooms");
-			const room = await roomCollection.findOne({ code: roomCode });
-	
-			if (!room) {
-				return callback({ error: "Invalid room code. Room does not exist." });
-			}
-	
-			const participantCollection = db.collection("Participants");
-			const existingParticipant = await participantCollection.findOne({ roomCode, name });
-	
-			// Add participant only if they don't already exist
-			if (!existingParticipant) {
-				await participantCollection.insertOne({ roomCode, name, joinedAt: new Date() });
-			}
-	
-			const participants = await participantCollection.find({ roomCode }).toArray();
-			io.to(roomCode).emit("participantUpdate", participants);
-	
-			socket.join(roomCode);
-			callback({ success: true, message: "Successfully joined the room" });
-		} catch (error) {
-			callback({ error: "An error occurred while joining the room" });
-		}
-	});
-	
-	
+        try {
+            const roomCollection = db.collection("Rooms");
+            const room = await roomCollection.findOne({ code: roomCode });
+    
+            if (!room) {
+                return callback({ error: "Invalid room code. Room does not exist." });
+            }
+    
+            const participantCollection = db.collection("Participants");
+            const existingParticipant = await participantCollection.findOne({ roomCode, name });
+    
+            // Add participant only if they don't already exist
+            if (!existingParticipant) {
+                await participantCollection.insertOne({ roomCode, name, joinedAt: new Date() });
+            }
+    
+            const participants = await participantCollection.find({ roomCode }).toArray();
+            io.to(roomCode).emit("participantUpdate", participants);
+    
+            socket.join(roomCode);
+            callback({ success: true, message: "Successfully joined the room" });
+        } catch (error) {
+            callback({ error: "An error occurred while joining the room" });
+        }
+    });
+    
+    socket.on("startGame", async ({ roomCode, hostName }, callback) => {
+        try {
+            // Verify that the person starting the game is the host
+            const roomCollection = db.collection("Rooms");
+            const room = await roomCollection.findOne({ code: roomCode });
+    
+            // Check if the room exists and the host name matches
+            if (!room) {
+                return callback({ error: "Room not found" });
+            }
+    
+            if (room.hostName !== hostName) {
+                return callback({ error: "Only the room creator can start the game" });
+            }
+    
+            // Broadcast game start to all participants in the room
+            io.to(roomCode).emit("gameStarted");
+            
+            callback({ success: true, message: "Game started" });
+        } catch (error) {
+            console.error("Error starting game:", error);
+            callback({ error: "An error occurred while starting the game" });
+        }
+    });
+    
     socket.on("disconnect", () => {
         console.log("User disconnected:", socket.id);
-		
     });
 });
 
